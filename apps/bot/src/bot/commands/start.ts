@@ -36,6 +36,7 @@ export async function handleStart(ctx: Context): Promise<void> {
         username: ctx.from.username ?? null,
         firstName: ctx.from.first_name,
         lastName: ctx.from.last_name ?? null,
+        isVerified: true,  // Auto-verify on creation (CAPTCHA disabled for now)
       },
     });
 
@@ -100,10 +101,12 @@ export async function handleStart(ctx: Context): Promise<void> {
     }
   }
 
-  // If user is not verified, send CAPTCHA
+  // CAPTCHA disabled for production launch — auto-verify instead
   if (!user.isVerified) {
-    await sendCaptcha(ctx, user.id);
-    return;
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { isVerified: true },
+    });
   }
 
   // User is verified — show welcome message
