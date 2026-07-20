@@ -25,7 +25,12 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // ─── Environment Validation ────────────────────────────
 const BOT_TOKEN = process.env["TELEGRAM_BOT_TOKEN"];
 const PORT = parseInt(process.env["PORT"] ?? "3000", 10);
-const WEBHOOK_URL = process.env["WEBHOOK_URL"];
+
+// Auto-detect webhook URL: explicit WEBHOOK_URL > Railway auto-domain > undefined (polling)
+const RAILWAY_DOMAIN = process.env["RAILWAY_PUBLIC_DOMAIN"];
+const WEBHOOK_URL = process.env["WEBHOOK_URL"]
+  ?? (RAILWAY_DOMAIN ? `https://${RAILWAY_DOMAIN}` : undefined);
+
 const MINI_APP_URL = process.env["MINI_APP_URL"] ?? `http://localhost:${PORT}/app`;
 
 if (!BOT_TOKEN) {
@@ -121,10 +126,18 @@ async function start(): Promise<void> {
 
     // Set webhook OR start polling
     if (WEBHOOK_URL) {
-      await bot.api.setWebhook(`${WEBHOOK_URL}/webhook`, {
-        drop_pending_updates: true,
-      });
-      console.log(`📡 Webhook set to ${WEBHOOK_URL}/webhook`);
+      try {
+        await bot.api.setWebhook(`${WEBHOOK_URL}/webhook`, {
+          drop_pending_updates: true,
+        });
+        console.log(`📡 Webhook set to ${WEBHOOK_URL}/webhook`);
+      } catch (webhookErr) {
+        console.error(`⚠️ Webhook setup failed, falling back to polling:`, webhookErr);
+        await bot.api.deleteWebhook({ drop_pending_updates: true }).catch(() => {});
+        bot.start({
+          onStart: () => console.log("🟢 Bot polling started (webhook fallback)"),
+        });
+      }
     } else {
       // Local dev mode — use long polling instead of webhook
       console.log("🔄 No WEBHOOK_URL — starting in polling mode (local dev)");
