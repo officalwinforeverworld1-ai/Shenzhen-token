@@ -3,7 +3,11 @@ node_modules
 **/node_modules
 **/dist
 **/.turbo
+**/.next
 .git
 .env
 .env.local
 *.log
+
+# Admin is a separate service, not part of the bot container
+apps/admin
