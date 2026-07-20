@@ -117,7 +117,13 @@ export async function sendWelcome(
   ctx: Context,
   isNewUser: boolean,
 ): Promise<void> {
-  const MINI_APP = process.env["MINI_APP_URL"] ?? "http://localhost:5173";
+  // Auto-detect: MINI_APP_URL > Railway public domain > localhost
+  const railwayDomain = process.env["RAILWAY_PUBLIC_DOMAIN"];
+  const MINI_APP = process.env["MINI_APP_URL"] && !process.env["MINI_APP_URL"].includes("<")
+    ? process.env["MINI_APP_URL"]
+    : railwayDomain
+      ? `https://${railwayDomain}`
+      : "http://localhost:5173";
 
   if (isNewUser) {
     // ─── New User Onboarding ─────────────────────────
