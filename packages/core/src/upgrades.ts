@@ -42,11 +42,61 @@ export async function getAvailableUpgrades(
   userId: number,
 ): Promise<UpgradeView[]> {
   // Fetch all active upgrades and user's current levels
-  const [upgrades, userUpgrades, balance] = await Promise.all([
-    prisma.upgrade.findMany({
+  let upgrades = await prisma.upgrade.findMany({
+    where: { isActive: true },
+    orderBy: { sortOrder: "asc" },
+  });
+
+  // Auto-seed if empty (e.g. initial production setup)
+  if (upgrades.length === 0) {
+    await prisma.upgrade.createMany({
+      data: [
+        {
+          slug: "tap_power",
+          name: "Tap Power",
+          description: "Increase points earned per tap",
+          type: "tap_power",
+          baseCost: 100,
+          costMultiplier: 1.5,
+          baseEffect: 1,
+          maxLevel: 20,
+          iconEmoji: "💪",
+          sortOrder: 1,
+        },
+        {
+          slug: "max_energy",
+          name: "Energy Capacity",
+          description: "Increase maximum energy storage",
+          type: "max_energy",
+          baseCost: 150,
+          costMultiplier: 1.4,
+          baseEffect: 200,
+          maxLevel: 15,
+          iconEmoji: "🔋",
+          sortOrder: 2,
+        },
+        {
+          slug: "energy_regen",
+          name: "Energy Recharge",
+          description: "Faster energy regeneration",
+          type: "energy_regen",
+          baseCost: 200,
+          costMultiplier: 1.6,
+          baseEffect: 0.5,
+          maxLevel: 10,
+          iconEmoji: "⚡",
+          sortOrder: 3,
+        },
+      ],
+      skipDuplicates: true,
+    });
+    upgrades = await prisma.upgrade.findMany({
       where: { isActive: true },
       orderBy: { sortOrder: "asc" },
-    }),
+    });
+  }
+
+  const [userUpgrades, balance] = await Promise.all([
     prisma.userUpgrade.findMany({
       where: { userId },
     }),
