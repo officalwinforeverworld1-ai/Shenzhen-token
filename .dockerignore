@@ -1,0 +1,9 @@
+# Ignore node_modules and build artifacts
+node_modules
+**/node_modules
+**/dist
+**/.turbo
+.git
+.env
+.env.local
+*.log

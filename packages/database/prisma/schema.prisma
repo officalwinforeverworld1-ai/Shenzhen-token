@@ -1,0 +1,254 @@
+// ============================================
+// Shén Zhèn Airdrop — Prisma Schema
+// ============================================
+// This is the SINGLE source of truth for the database.
+// Every surface (bot, admin, mini-app) reads/writes through this.
+// DO NOT restructure without explicit approval.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Users ──────────────────────────────────────────────
+model User {
+  id              Int       @id @default(autoincrement())
+  telegramId      BigInt    @unique
+  username        String?
+  firstName       String
+  lastName        String?
+  isVerified      Boolean   @default(false)  // passed CAPTCHA
+  isBanned        Boolean   @default(false)
+  referredBy      Int?                        // FK to User.id who referred them
+
+  // Energy system (tap-to-earn) — server-authoritative
+  energy          Int       @default(1000)    // current energy at last update
+  maxEnergy       Int       @default(1000)    // max capacity (upgradeable)
+  energyUpdatedAt DateTime  @default(now())   // timestamp of last energy write
+  tapPower        Int       @default(1)       // points earned per tap (upgradeable)
+  energyRegenRate Float     @default(1.0)     // energy per second (upgradeable)
+
+  // TON wallet connection
+  walletAddress   String?                     // TON wallet address (raw format)
+  walletConnectedAt DateTime?                 // when wallet was connected
+
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  // Relations
+  referrer            User?             @relation("Referrals", fields: [referredBy], references: [id])
+  referrals           User[]            @relation("Referrals")
+  pointLedger         PointLedger[]
+  taskSubmissions     TaskSubmission[]
+  sybilFlags          SybilFlag[]
+  userUpgrades        UserUpgrade[]
+  sentReferrals       Referral[]        @relation("ReferrerRel")
+  receivedReferral    Referral?         @relation("RefereeRel")
+  dailyCheckins       DailyCheckin[]
+  spinHistory         SpinHistory[]
+
+  @@index([telegramId])
+  @@index([isBanned])
+}
+
+// ─── Points (Append-Only Ledger) ────────────────────────
+// EVERY point award writes here. No direct balance edits. Ever.
+// The user's "balance" is computed as SUM(amount) from this table.
+model PointLedger {
+  id          Int       @id @default(autoincrement())
+  userId      Int
+  amount      Int                           // positive = earned, negative = spent (upgrades)
+  reason      String                        // 'task_completion', 'referral_reward', 'tap', 'upgrade_purchase'
+  sourceType  String                        // 'bot', 'mini_app', 'admin'
+  sourceId    String?                       // task ID, referral ID, upgrade ID, tap batch ID, etc.
+  metadata    Json?                         // extra context (task title, upgrade name, etc.)
+  createdAt   DateTime  @default(now())
+
+  user        User      @relation(fields: [userId], references: [id])
+
+  // Prevents double-crediting the same one-time event.
+  // For repeatable events, sourceId includes a distinguishing suffix (timestamp/attempt#).
+  @@unique([userId, reason, sourceId], name: "unique_award")
+  @@index([userId, createdAt])
+  @@index([userId])
+}
+
+// ─── Tasks ──────────────────────────────────────────────
+model Task {
+  id              Int       @id @default(autoincrement())
+  title           String
+  description     String
+  pointReward     Int
+  type            String    // 'auto_channel', 'auto_quiz', 'manual'
+  // Verification data depends on type:
+  //   auto_channel: { "channelId": "@channel_name" }
+  //   auto_quiz:    { "question": "...", "answer": "..." }
+  //   manual:       null (human reviews proof)
+  verifyData      Json?
+  isRepeatable    Boolean   @default(false)
+  repeatCooldown  Int?      // seconds between repeats (null = no cooldown)
+  isActive        Boolean   @default(true)
+  sortOrder       Int       @default(0)      // display ordering
+  maxCompletions  Int?      // null = unlimited completions across all users
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  submissions     TaskSubmission[]
+
+  @@index([isActive])
+}
+
+// ─── Task Submissions ───────────────────────────────────
+model TaskSubmission {
+  id          Int       @id @default(autoincrement())
+  userId      Int
+  taskId      Int
+  status      String    @default("pending")   // 'pending', 'approved', 'rejected', 'auto_approved'
+  proof       String?                          // URL or text proof for manual tasks
+  reviewedBy  Int?                             // admin user ID who reviewed
+  reviewedAt  DateTime?
+  createdAt   DateTime  @default(now())
+
+  user        User      @relation(fields: [userId], references: [id])
+  task        Task      @relation(fields: [taskId], references: [id])
+
+  // For non-repeatable tasks: one submission per user per task
+  // For repeatable tasks: this constraint is NOT applied (handled in app logic)
+  @@index([userId, taskId])
+  @@index([status])
+  @@index([taskId, status])
+}
+
+// ─── Referrals ──────────────────────────────────────────
+// Reward only pays out when referee completes first real task.
+// Qualification uses atomic UPDATE ... WHERE status = 'pending'.
+model Referral {
+  id          Int       @id @default(autoincrement())
+  referrerId  Int
+  refereeId   Int       @unique              // one referrer per user
+  status      String    @default("pending")  // 'pending', 'qualified', 'rewarded'
+  qualifiedAt DateTime?
+  rewardedAt  DateTime?
+  createdAt   DateTime  @default(now())
+
+  referrer    User      @relation("ReferrerRel", fields: [referrerId], references: [id])
+  referee     User      @relation("RefereeRel", fields: [refereeId], references: [id])
+
+  @@index([referrerId])
+  @@index([status])
+}
+
+// ─── Sybil Flags ────────────────────────────────────────
+// Background anti-farming detection flags for human review.
+model SybilFlag {
+  id          Int       @id @default(autoincrement())
+  userId      Int
+  flagType    String    // 'rapid_referrals', 'similar_names', 'new_account_burst', etc.
+  details     Json?     // machine-readable context for the flag
+  severity    String    @default("medium")   // 'low', 'medium', 'high'
+  isResolved  Boolean   @default(false)
+  resolvedBy  Int?                           // admin user ID
+  resolution  String?                        // 'dismissed', 'banned', 'cleared'
+  resolvedAt  DateTime?
+  createdAt   DateTime  @default(now())
+
+  user        User      @relation(fields: [userId], references: [id])
+
+  @@index([isResolved])
+  @@index([userId])
+}
+
+// ─── Admin Users ────────────────────────────────────────
+// No public signup. First admin seeded via CLI.
+model AdminUser {
+  id           Int       @id @default(autoincrement())
+  username     String    @unique
+  passwordHash String
+  role         String    @default("moderator") // 'admin', 'moderator'
+  lastLoginAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+}
+
+// ─── Upgrades (Tap-to-Earn) ─────────────────────────────
+// Spend points to boost per-tap earnings, max energy, regen rate.
+model Upgrade {
+  id              Int       @id @default(autoincrement())
+  slug            String    @unique           // 'tap_power', 'max_energy', 'energy_regen'
+  name            String
+  description     String
+  type            String                      // 'tap_power', 'max_energy', 'energy_regen'
+  baseCost        Int                         // point cost for level 1
+  costMultiplier  Float     @default(1.5)     // each level costs baseCost * (multiplier ^ (level-1))
+  baseEffect      Float                       // effect value per level
+  maxLevel        Int       @default(10)
+  iconEmoji       String    @default("⬆️")   // for display in Mini App
+  isActive        Boolean   @default(true)
+  sortOrder       Int       @default(0)
+
+  userUpgrades    UserUpgrade[]
+}
+
+// ─── User Upgrades (Junction Table) ─────────────────────
+model UserUpgrade {
+  id          Int       @id @default(autoincrement())
+  userId      Int
+  upgradeId   Int
+  level       Int       @default(1)
+  purchasedAt DateTime  @default(now())
+
+  user        User      @relation(fields: [userId], references: [id])
+  upgrade     Upgrade   @relation(fields: [upgradeId], references: [id])
+
+  @@unique([userId, upgradeId])
+}
+
+// ─── Broadcasts ─────────────────────────────────────────
+// Queued message blasts — rate-limited, never synchronous.
+model Broadcast {
+  id          Int       @id @default(autoincrement())
+  message     String
+  sentBy      Int                             // admin user ID
+  totalUsers  Int       @default(0)
+  sentCount   Int       @default(0)
+  failedCount Int       @default(0)
+  status      String    @default("queued")    // 'queued', 'sending', 'completed', 'cancelled'
+  createdAt   DateTime  @default(now())
+  startedAt   DateTime?
+  completedAt DateTime?
+}
+
+// ─── Daily Check-in ─────────────────────────────────────
+// One row per user per day. Streak = consecutive days checked in.
+model DailyCheckin {
+  id          Int       @id @default(autoincrement())
+  userId      Int
+  day         DateTime  @db.Date              // just the date, no time
+  streak      Int       @default(1)           // current streak at time of check-in
+  pointsAwarded Int                           // how many points this check-in gave
+  createdAt   DateTime  @default(now())
+
+  user        User      @relation(fields: [userId], references: [id])
+
+  @@unique([userId, day])                     // one check-in per user per day
+  @@index([userId, day])
+}
+
+// ─── Spin History ───────────────────────────────────────
+// Track every spin for anti-fraud and cooldown enforcement.
+model SpinHistory {
+  id          Int       @id @default(autoincrement())
+  userId      Int
+  prizeIndex  Int                             // which slice they landed on (0-7)
+  pointsWon   Int                             // actual points awarded
+  spinType    String    @default("free")      // 'free' or 'paid' (50 points)
+  createdAt   DateTime  @default(now())
+
+  user        User      @relation(fields: [userId], references: [id])
+
+  @@index([userId, createdAt])
+}

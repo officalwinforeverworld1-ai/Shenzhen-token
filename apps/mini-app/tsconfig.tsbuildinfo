@@ -1,0 +1,1 @@
+{"root":["./src/app.tsx","./src/api.ts","./src/main.tsx","./src/vite-env.d.ts","./src/components/tgecountdown.tsx","./src/components/walletbar.tsx","./src/pages/friends.tsx","./src/pages/games.tsx","./src/pages/home.tsx","./src/pages/leaderboard.tsx","./src/pages/tasks.tsx","./src/pages/upgrades.tsx"],"version":"5.9.3"}
