@@ -52,6 +52,8 @@ RUN pnpm --filter @shen-zhen/bot build
 # ─── Production Stage ───────────────────────────────
 FROM node:22-alpine AS runner
 
+RUN corepack enable && corepack prepare pnpm@9 --activate
+
 WORKDIR /app
 
 # Copy the entire built workspace
@@ -64,4 +66,4 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
   CMD wget -q --spider http://localhost:3000/health || exit 1
 
-CMD ["sh", "-c", "./node_modules/.bin/prisma db push --schema=packages/database/prisma/schema.prisma && node apps/bot/dist/index.js"]
+CMD ["sh", "-c", "pnpm exec prisma db push --schema=packages/database/prisma/schema.prisma --accept-data-loss && node apps/bot/dist/index.js"]
