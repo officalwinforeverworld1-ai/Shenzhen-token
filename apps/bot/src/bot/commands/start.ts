@@ -11,7 +11,7 @@
 import { Context, InlineKeyboard } from "grammy";
 import { prisma } from "@shen-zhen/database";
 import { createReferral, parseReferralCode, awardPoints } from "@shen-zhen/core";
-import { sendCaptcha } from "../captcha.js";
+// import { sendCaptcha } from "../captcha.js"; // CAPTCHA disabled for launch
 
 const REQUIRED_CHANNEL = process.env["REQUIRED_CHANNEL_ID"];
 
